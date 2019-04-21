@@ -33,6 +33,9 @@ using namespace std;
 
 #define BMP_FILE_NAME "timg.bmp"
 
+const int N = 5;
+double GsCore[N][N];
+
 /*******************************************************************************/
 
 void showBmpHead(BITMAPFILEHEADER &pBmpHead) {
@@ -52,32 +55,33 @@ void showBmpInforHead(BITMAPINFODEADER &pBmpInforHead) {
     cout << "biPlanes平面数:" << pBmpInforHead.biPlanes << endl;
     cout << "biBitCount采用颜色位数:" << pBmpInforHead.biBitCount << endl;
     cout << "压缩方式:" << pBmpInforHead.biCompression << endl;
-    cout << "biSizeImage实际位图数据占用的字节数:" << pBmpInforHead.biSizeImage
-         << endl;
+    cout << "biSizeImage实际位图数据占用的字节数:" << pBmpInforHead.biSizeImage << endl;
     cout << "X方向分辨率:" << pBmpInforHead.biXPelsPerMeter << endl;
     cout << "Y方向分辨率:" << pBmpInforHead.biYPelsPerMeter << endl;
     cout << "使用的颜色数:" << pBmpInforHead.biClrUsed << endl;
     cout << "重要颜色数:" << pBmpInforHead.biClrImportant << endl;
 }
 
-void readBmp(FILE* fp, unsigned char *pBmpBuf, int BmpWidth, int BmpHeight, int BiBitCount) {
-
+void readBmp(FILE *fp, unsigned char *&pBmpBuf, int BmpWidth, int BmpHeight,
+             int BiBitCount) {
     /**
      * 灰度图像有颜色表，且颜色表表项为256
      * (可以理解为lineByte是对bmpWidth的以4为步长的向上取整)
-     */ 
-    int lineByte = (BmpWidth * BiBitCount / 8 + 3) / 4 * 4;  
+     */
+    int lineByte = (BmpWidth * BiBitCount / 8 + 3) / 4 * 4;
 
     //申请位图数据所需要的空间，读位图数据进内存
-    pBmpBuf = new(nothrow) unsigned char[lineByte * BmpHeight];
-    if(pBmpBuf == NULL) {
+    pBmpBuf = new (nothrow) unsigned char[lineByte * BmpHeight];
+
+    if (pBmpBuf == NULL) {
         cerr << "Mem alloc failed." << endl;
         exit(-1);
     }
 
-    fread(pBmpBuf, 1, lineByte * BmpHeight, fp);
+    fread(pBmpBuf, lineByte * BmpHeight, 1, fp);
 
-    return;  
+
+    return;
 }
 
 //给定一个图像位图数据、宽、高、颜色表指针及每像素所占的位数等信息,将其写到指定文件中
@@ -146,15 +150,41 @@ bool saveBmp(char *bmpName, unsigned char *imgBuf, int width, int height,
     return 1;
 }
 
+void genGsCore() {
+    int i, j;
+    double sigma = 1;
+    double sum = 0.0;
+
+    for (i = 0; i < N; i++) {
+        for (j = 0; j < N; j++) {
+            GsCore[i][j] =
+                exp(-((i - N / 2) * (i - N / 2) + (j - N / 2) * (j - N / 2)) /
+                    (2.0 * sigma * sigma));
+            sum += GsCore[i][j];
+        }
+    }
+    FILE *fp;
+    fp = fopen("gs.txt", "w");
+    for (i = 0; i < N; i++) {
+        for (j = 0; j < N; j++) {
+            GsCore[i][j] /= sum;
+            fprintf(fp, "%f ", GsCore[i][j]);
+        }
+        fprintf(fp, "\n");
+    }
+
+    fclose(fp);
+}
+
 int main(int argc, char *argv[]) {
     BITMAPFILEHEADER BmpHead;
     BITMAPINFODEADER BmpInfo;
-    
-    int BmpWidth;//图像的宽
-    int BmpHeight;//图像的高
-    int BiBitCount;//图像类型，每像素位数 8-灰度图 24-彩色图
-    unsigned char *pBmpBuf;  //读入图像数据的指针
-    
+
+    int BmpWidth;    //图像的宽
+    int BmpHeight;   //图像的高
+    int BiBitCount;  //图像类型，每像素位数 8-灰度图 24-彩色图
+    unsigned char *pBmpBuf = NULL;  //读入图像数据的指针
+
     FILE *fp = fopen(BMP_FILE_NAME, "rb");  //二进制读方式打开指定的图像文件
     if (fp == 0) {
         cerr << "Can not open " << BMP_FILE_NAME << endl;
@@ -164,28 +194,49 @@ int main(int argc, char *argv[]) {
     fread(&BmpHead, sizeof(BITMAPFILEHEADER), 1, fp);
 
     //获取图像宽、高、每像素所占位数等信息
-    fread(&BmpInfo, sizeof(BITMAPINFOHEADER), 1, fp);  
-    
+    fread(&BmpInfo, sizeof(BITMAPINFOHEADER), 1, fp);
+
     // 打印一下文件信息
     showBmpHead(BmpHead);
     showBmpInforHead(BmpInfo);
-    
-    BmpWidth = BmpInfo.biWidth;  //宽度用来计算每行像素的字节数
+
+    BmpWidth = BmpInfo.biWidth;    //宽度用来计算每行像素的字节数
     BmpHeight = BmpInfo.biHeight;  // 像素的行数
-    BiBitCount = BmpInfo.biBitCount;  //定义变量，计算图像每行像素所占的字节数（必须是4的倍数）
-    
+    //计算图像每行像素所占的字节数（必须是4的倍数）
+    BiBitCount = BmpInfo.biBitCount;
+
     // 将图片读取到内存中
     readBmp(fp, pBmpBuf, BmpWidth, BmpHeight, BiBitCount);
+    // 计算卷积核
+    genGsCore();
 
     // MPI 并行计算部分
+    int numprocs, myid, source;
+    MPI_Status status;
+    char message[100];
+    unsigned char* Rp = pBmpBuf + 2;
+    unsigned char* Gp = pBmpBuf + 1;
+    unsigned char* Bp = pBmpBuf;
+    int pixStep = 3;    // 移动一个像素指针移动的字节数
+
     MPI_Init(&argc, &argv);
-
+    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+    MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
     
+    if (myid != 0) {  //非0号进程发送消息
+        // MPI_Send(message, strlen(message) + 1, MPI_CHAR, 0, 99, MPI_COMM_WORLD);
+    }
+    else {   // myid == 0，即0号进程接收消息
+        for (source = 1; source < numprocs; source++) {
+            MPI_Recv(message, 100, MPI_CHAR, source, 99,
+                MPI_COMM_WORLD, &status);
+            // printf("接收到第%d号进程发送的消息：%s\n", source, message);
+        }
+    }
     MPI_Finalize();
-    // MPI end
+    // MPI End
 
-    if (pBmpBuf)
-        delete pBmpBuf;
+    if (pBmpBuf) delete pBmpBuf;
 
     fclose(fp);
     return 0;
