@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <iostream>
+#include <fstream>
 #include <mpi.h>
 
 #pragma pack(1)
@@ -150,6 +151,29 @@ bool saveBmp(char *bmpName, unsigned char *imgBuf, int width, int height,
     return 1;
 }
 
+void readGsCore() {
+    ifstream fin;
+    try
+    {
+        fin.open("gscore.txt");
+    }
+    catch(const std::exception& e)
+    {
+        std::cerr << e.what() << '\n';
+        exit(-1);
+    }
+    
+    
+    int i, j;
+    for (i = 0; i < N; i++) {
+        for (j = 0; j < N; j++) {
+            fin >> GsCore[i][j];
+        }
+    }
+
+    fin.close();
+}
+
 void genGsCore() {
     int i, j;
     double sigma = 1;
@@ -178,19 +202,37 @@ void genGsCore() {
 
 /**
  * 卷积公共计算部分
+ * 返回rgb位图数组
  */
-unsigned char* convolution(int base_x, int base_y, int conv_width, int conv_height) {
-    const unsigned char* Rp = pBmpBuf + 2;
-    const unsigned char* Gp = pBmpBuf + 1;
-    const unsigned char* Bp = pBmpBuf;
-    int conv_byte_size = conv_width * conv_height * 3;
+unsigned char* convolution(int base_x, int base_y, int conv_width, int conv_height, int bmp_width, int bmp_height) {
+    int pixStep = 3;    // 移动一个像素指针移动的字节数
+    int offset = (base_x + base_y * bmp_height) * pixStep;
+    const unsigned char* Rp = pBmpBuf + 2 + offset;
+    const unsigned char* Gp = pBmpBuf + 1 + offset;
+    const unsigned char* Bp = pBmpBuf + offset;
     unsigned char* resBuf = NULL;
+    int conv_byte_size = conv_width * conv_height * 3;
 
+    // 指向结果的RGB指针
+    unsigned char* resRp = resBuf + 2;
+    unsigned char* resGp = resBuf + 1;
+    unsigned char* resBp = resBuf;
+
+    resBuf = new(nothrow) unsigned char[conv_byte_size];
+
+    for(int i = 0; i < conv_height; i++)
+        for(int j = 0; j < conv_width; j++) {
+
+            
+        }
 
 
     return resBuf;
 }
 
+/**
+ * start
+ */
 int main(int argc, char *argv[]) {
     BITMAPFILEHEADER BmpHead;
     BITMAPINFODEADER BmpInfo;
@@ -221,18 +263,19 @@ int main(int argc, char *argv[]) {
 
     // 将图片读取到内存中
     readBmp(fp, pBmpBuf, BmpWidth, BmpHeight, BiBitCount);
-    // 计算卷积核
-    genGsCore();
+    // 创建卷积核
+    // genGsCore();
+
+    // 读取卷积核
+    readGsCore();
 
     // MPI 并行计算部分
     int size, myrank, source, dest;
     MPI_Status status;
     double start_time, end_time;
 
-    int pixStep = 3;    // 移动一个像素指针移动的字节数
-
     unsigned char* resBuf = NULL;
-    int base_x, base_y, conv_width, conv_height;    // 起始的像素点以及计算区域
+    int base_x, base_y, convWidth, convHeight;    // 起始的像素点以及计算区域
     int conv_byte_size;  // 卷积区域字节数
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
@@ -262,10 +305,10 @@ int main(int argc, char *argv[]) {
         }
 
         /* 公共计算部分 */
-        resBuf = convolution(base_x, base_y, conv_width, conv_height);
+        resBuf = convolution(base_x, base_y, convWidth, convHeight, BmpWidth, BmpHeight);
         if (resBuf == NULL)
             goto END;
-        conv_byte_size = conv_width * conv_height * 3;
+        conv_byte_size = convWidth * convHeight * 3;
         dest = 0;
         MPI_Send(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, dest, 99, MPI_COMM_WORLD);
         end_time = MPI_Wtime();
@@ -278,7 +321,7 @@ int main(int argc, char *argv[]) {
         else if (size >= 4) {
 
         }
-        resBuf = convolution(base_x, base_y, conv_width, conv_height);
+        resBuf = convolution(base_x, base_y, convWidth, convHeight, BmpWidth, BmpHeight);
         if (resBuf == NULL)
             cerr << "0# resBuf error." << endl;
 
@@ -295,7 +338,9 @@ int main(int argc, char *argv[]) {
         end_time = MPI_Wtime();
     }
 
-END:    
+END:
+    if (resBuf)
+        delete resBuf;
     MPI_Finalize();
     // MPI End
 
