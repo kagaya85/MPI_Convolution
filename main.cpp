@@ -4,7 +4,9 @@
 #include <sys/types.h>
 #include <iostream>
 #include <fstream>
-// #include <mpi.h>
+#include <mpi.h>
+#include <string.h>
+#include <stdlib.h>
 
 #pragma pack(1)
 
@@ -229,8 +231,8 @@ unsigned char getGsValue(int x, int y, const unsigned char *channal)
  * 返回rgb位图数组
  */
 unsigned char* convolution(int base_y, int conv_height) {
+    cout << "Base_y: " << base_y << " conv_height: " << conv_height << endl;
     int pixStep = 3;    // 移动一个像素指针移动的字节数
-    int offset = (base_y * BmpHeight) * pixStep;    // 到起始像素需要移动的字节数
     const unsigned char* Rp = pBmpBuf + 2;
     const unsigned char* Gp = pBmpBuf + 1;
     const unsigned char* Bp = pBmpBuf;
@@ -240,9 +242,9 @@ unsigned char* convolution(int base_y, int conv_height) {
     resBuf = new(nothrow) unsigned char[conv_byte_size];
 
     // 指向结果的RGB指针
-    unsigned char* resRp = resBuf + 2 + offset;
-    unsigned char* resGp = resBuf + 1 + offset;
-    unsigned char* resBp = resBuf + offset;
+    unsigned char* resRp = resBuf + 2;
+    unsigned char* resGp = resBuf + 1;
+    unsigned char* resBp = resBuf;
 
 
     for(int i = 0; i < conv_height; i++)
@@ -267,7 +269,7 @@ int main(int argc, char *argv[]) {
     BITMAPINFODEADER BmpInfo;
 
     int BiBitCount;  //图像类型，每像素位数 8-灰度图 24-彩色图
-    unsigned char* result;
+    unsigned char* result = NULL;
 
     FILE *fp = fopen(BMP_FILE_NAME, "rb");  //二进制读方式打开指定的图像文件
     if (fp == 0) {
@@ -293,90 +295,88 @@ int main(int argc, char *argv[]) {
     readBmp(fp, pBmpBuf, BmpWidth, BmpHeight, BiBitCount);
     // 创建卷积核
     // genGsCore();
-
     // 读取卷积核
     readGsCore();
 
-    result = convolution(0, BmpHeight);
-
-    saveBmp("result.bmp", result, BmpWidth, BmpHeight, BiBitCount);
     // MPI 并行计算部分
-//     int size, myrank, source, dest;
-//     MPI_Status status;
-//     double start_time, end_time;
+    int size, myrank, dest;
+    MPI_Status status;
+    double start_time, end_time;
 
-//     unsigned char* resBuf = NULL;
-//     int base_x, base_y, convWidth, convHeight;    // 起始的像素点以及计算区域
-//     int conv_byte_size;  // 卷积区域字节数
-//     MPI_Init(&argc, &argv);
-//     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-//     MPI_Comm_size(MPI_COMM_WORLD, &size);
-//     start_time = MPI_Wtime();
-//     if (myrank != 0) {  //非0号进程发送消息
-//         // 设置参数
-//         if (size < 4) { // 小于4进程，按两进程计算
-//             if (myrank == 1) {
+    unsigned char* resBuf = NULL;
+    int base_y, convHeight, lastConvHeight;    // 起始的像素点以及计算区域
+    int conv_byte_size;  // 卷积区域字节数
 
-//             }
-//             else
-//                 goto END;
-//         }
-//         else if (size >= 4) {   // 大于等于4进程，按4进程计算
-//             if (myrank == 1) {
+    result = new(nothrow) unsigned char[BmpWidth * BmpHeight * 3];
+    if(result == NULL){
+        cerr << "Result new error." << endl;
+        exit(-1);
+    }
 
-//             }
-//             else if (myrank == 2) {
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    start_time = MPI_Wtime();
+    cout << "Rank " << myrank << " start." << endl;
 
-//             }
-//             else if (myrank == 3) {
+    // 起始像素纵坐标
+    convHeight = BmpHeight / size;
+    base_y = myrank * convHeight;            
+    lastConvHeight = BmpHeight - (size - 1) * convHeight;   
+    if (myrank != 0) {  //非0号进程发送消息
+        // 设置参数
+        if (myrank != size - 1) {
+            // nothing
+        }
+        else {
+            // 最后一个进程计算余下所有
+            convHeight = lastConvHeight;            
+        }
 
-//             }
-//             else
-//                 goto END;
-//         }
+        /* 公共计算部分 */
+        conv_byte_size = BmpWidth * convHeight * 3;
+        resBuf = convolution(base_y, convHeight);
+        if (resBuf == NULL)
+            goto END;
+        dest = 0;
+        end_time = MPI_Wtime();
+        cout << "Rank " << myrank << " end, cost " << end_time - start_time << " second(s)." << endl;
+        MPI_Send(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, dest, 99, MPI_COMM_WORLD);
+    }
+    else {   // myrank == 0，即0号进程参与计算并负责接受数据
+        // 设置参数
+        base_y = 0;
+        resBuf = convolution(base_y, convHeight);
+        if (resBuf == NULL)
+            cerr << "0# resBuf error." << endl;
 
-//         /* 公共计算部分 */
-//         resBuf = convolution(base_x, base_y, convWidth, convHeight, BmpWidth, BmpHeight);
-//         if (resBuf == NULL)
-//             goto END;
-//         conv_byte_size = convWidth * convHeight * 3;
-//         dest = 0;
-//         MPI_Send(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, dest, 99, MPI_COMM_WORLD);
-//         end_time = MPI_Wtime();
-//     }
-//     else {   // myrank == 0，即0号进程参与计算并负责接受数据
-//         // 设置参数
-//         if (size < 4) {
+        conv_byte_size = BmpWidth * convHeight * 3;
+        memcpy(result, resBuf, conv_byte_size);
+        delete resBuf;
+        resBuf = NULL;
         
-//         }
-//         else if (size >= 4) {
+        int convByteSize = BmpWidth * convHeight * 3; 
+        int lastConvByteSize = BmpWidth * lastConvHeight * 3; 
+        
+        resBuf = new(nothrow) unsigned char[lastConvByteSize]; // 按可能最大的接受字节数申请
+        // 合并结果
+        for (int i = 0; i < size - 1; i++) {
+            MPI_Recv(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, MPI_ANY_SOURCE, 99, MPI_COMM_WORLD, &status);
+            memcpy(result + (status.MPI_SOURCE * convHeight * BmpWidth * 3), resBuf, (status.MPI_SOURCE == size - 1) ? lastConvByteSize : convByteSize);
+        }
+        end_time = MPI_Wtime();
+        cout << "Rank " << myrank << " end, cost " << end_time - start_time << " second(s)." << endl;
+        saveBmp("result.bmp", result, BmpWidth, BmpHeight, BiBitCount);
+    }
 
-//         }
-//         resBuf = convolution(base_x, base_y, convWidth, convHeight, BmpWidth, BmpHeight);
-//         if (resBuf == NULL)
-//             cerr << "0# resBuf error." << endl;
-
-//         // 合并结果
-//         for (source = 1; source < size; source++) {
-//             MPI_Recv(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, MPI_ANY_SOURCE, 99, MPI_COMM_WORLD, &status);
-//             if (size < 4) {
-
-//             }
-//             else if (size >= 4) {
-
-//             }   
-//         }
-//         end_time = MPI_Wtime();
-//     }
-
-// END:
-//     if (resBuf)
-//         delete resBuf;
-//     MPI_Finalize();
+END:
+    if (resBuf) delete resBuf;
+    MPI_Finalize();
     // MPI End
 
-
     if (pBmpBuf) delete pBmpBuf;
+    if (result) delete result;
+
     fclose(fp);
 
     return 0;
