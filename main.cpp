@@ -4,7 +4,7 @@
 #include <sys/types.h>
 #include <iostream>
 #include <fstream>
-#include <mpi.h>
+// #include <mpi.h>
 
 #pragma pack(1)
 
@@ -37,7 +37,8 @@ using namespace std;
 const int N = 5;
 double GsCore[N][N];
 unsigned char *pBmpBuf = NULL;  //读入图像数据的指针
-
+int BmpWidth;    //图像的宽
+int BmpHeight;   //图像的高
 /*******************************************************************************/
 
 void showBmpHead(BITMAPFILEHEADER &pBmpHead) {
@@ -86,7 +87,7 @@ void readBmp(FILE *fp, unsigned char *&pBmpBuf, int BmpWidth, int BmpHeight,
 }
 
 //给定一个图像位图数据、宽、高、颜色表指针及每像素所占的位数等信息,将其写到指定文件中
-bool saveBmp(char *bmpName, unsigned char *imgBuf, int width, int height,
+bool saveBmp(const char *bmpName, unsigned char *imgBuf, int width, int height,
              int biBitCount) {
     //如果位图数据指针为0，则没有数据传入，函数返回
     if (!imgBuf) return 0;
@@ -199,33 +200,61 @@ void genGsCore() {
 
     fclose(fp);
 }
+/**
+ * 给出像素二维坐标位置和通道指针，计算高斯和
+ */
+unsigned char getGsValue(int x, int y, const unsigned char *channal)
+{
+    double sum = 0;
+    int pixStep = 3;
+    // int pix = y * BmpWidth + x;
+    // 28311552
+    for (int i : {0, 1, 2, 3, 4}) {
+        for (int j : {0, 1, 2, 3, 4}) {
+            int pix_y = y + i - 2;
+            int pix_x = x + j - 2;
+            // 如果超出边界则补0, sum不增加
+            if (pix_y < 0 || pix_y >= BmpHeight || pix_x < 0 || pix_y >= BmpWidth)
+                continue;
+
+            sum += channal[((BmpWidth * pix_y) + pix_x) * pixStep] * GsCore[i][j];
+        }
+    }
+
+    return sum;
+}
 
 /**
  * 卷积公共计算部分
  * 返回rgb位图数组
  */
-unsigned char* convolution(int base_x, int base_y, int conv_width, int conv_height, int bmp_width, int bmp_height) {
+unsigned char* convolution(int base_y, int conv_height) {
     int pixStep = 3;    // 移动一个像素指针移动的字节数
-    int offset = (base_x + base_y * bmp_height) * pixStep;
-    const unsigned char* Rp = pBmpBuf + 2 + offset;
-    const unsigned char* Gp = pBmpBuf + 1 + offset;
-    const unsigned char* Bp = pBmpBuf + offset;
+    int offset = (base_y * BmpHeight) * pixStep;    // 到起始像素需要移动的字节数
+    const unsigned char* Rp = pBmpBuf + 2;
+    const unsigned char* Gp = pBmpBuf + 1;
+    const unsigned char* Bp = pBmpBuf;
     unsigned char* resBuf = NULL;
-    int conv_byte_size = conv_width * conv_height * 3;
-
-    // 指向结果的RGB指针
-    unsigned char* resRp = resBuf + 2;
-    unsigned char* resGp = resBuf + 1;
-    unsigned char* resBp = resBuf;
+    int conv_byte_size = BmpWidth * conv_height * pixStep;
 
     resBuf = new(nothrow) unsigned char[conv_byte_size];
 
+    // 指向结果的RGB指针
+    unsigned char* resRp = resBuf + 2 + offset;
+    unsigned char* resGp = resBuf + 1 + offset;
+    unsigned char* resBp = resBuf + offset;
+
+
     for(int i = 0; i < conv_height; i++)
-        for(int j = 0; j < conv_width; j++) {
+        for(int j = 0; j < BmpWidth; j++) {
+            *resRp = getGsValue(j, base_y + i, Rp);
+            *resGp = getGsValue(j, base_y + i, Gp);
+            *resBp = getGsValue(j, base_y + i, Bp);
 
-            
+            resRp += pixStep;
+            resGp += pixStep;
+            resBp += pixStep;
         }
-
 
     return resBuf;
 }
@@ -237,9 +266,8 @@ int main(int argc, char *argv[]) {
     BITMAPFILEHEADER BmpHead;
     BITMAPINFODEADER BmpInfo;
 
-    int BmpWidth;    //图像的宽
-    int BmpHeight;   //图像的高
     int BiBitCount;  //图像类型，每像素位数 8-灰度图 24-彩色图
+    unsigned char* result;
 
     FILE *fp = fopen(BMP_FILE_NAME, "rb");  //二进制读方式打开指定的图像文件
     if (fp == 0) {
@@ -269,80 +297,84 @@ int main(int argc, char *argv[]) {
     // 读取卷积核
     readGsCore();
 
+    result = convolution(0, BmpHeight);
+
+    saveBmp("result.bmp", result, BmpWidth, BmpHeight, BiBitCount);
     // MPI 并行计算部分
-    int size, myrank, source, dest;
-    MPI_Status status;
-    double start_time, end_time;
+//     int size, myrank, source, dest;
+//     MPI_Status status;
+//     double start_time, end_time;
 
-    unsigned char* resBuf = NULL;
-    int base_x, base_y, convWidth, convHeight;    // 起始的像素点以及计算区域
-    int conv_byte_size;  // 卷积区域字节数
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    start_time = MPI_Wtime();
-    if (myrank != 0) {  //非0号进程发送消息
-        // 设置参数
-        if (size < 4) { // 小于4进程，按两进程计算
-            if (myrank == 1) {
+//     unsigned char* resBuf = NULL;
+//     int base_x, base_y, convWidth, convHeight;    // 起始的像素点以及计算区域
+//     int conv_byte_size;  // 卷积区域字节数
+//     MPI_Init(&argc, &argv);
+//     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+//     MPI_Comm_size(MPI_COMM_WORLD, &size);
+//     start_time = MPI_Wtime();
+//     if (myrank != 0) {  //非0号进程发送消息
+//         // 设置参数
+//         if (size < 4) { // 小于4进程，按两进程计算
+//             if (myrank == 1) {
 
-            }
-            else
-                goto END;
-        }
-        else if (size >= 4) {   // 大于等于4进程，按4进程计算
-            if (myrank == 1) {
+//             }
+//             else
+//                 goto END;
+//         }
+//         else if (size >= 4) {   // 大于等于4进程，按4进程计算
+//             if (myrank == 1) {
 
-            }
-            else if (myrank == 2) {
+//             }
+//             else if (myrank == 2) {
 
-            }
-            else if (myrank == 3) {
+//             }
+//             else if (myrank == 3) {
 
-            }
-            else
-                goto END;
-        }
+//             }
+//             else
+//                 goto END;
+//         }
 
-        /* 公共计算部分 */
-        resBuf = convolution(base_x, base_y, convWidth, convHeight, BmpWidth, BmpHeight);
-        if (resBuf == NULL)
-            goto END;
-        conv_byte_size = convWidth * convHeight * 3;
-        dest = 0;
-        MPI_Send(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, dest, 99, MPI_COMM_WORLD);
-        end_time = MPI_Wtime();
-    }
-    else {   // myrank == 0，即0号进程参与计算并负责接受数据
-        // 设置参数
-        if (size < 4) {
+//         /* 公共计算部分 */
+//         resBuf = convolution(base_x, base_y, convWidth, convHeight, BmpWidth, BmpHeight);
+//         if (resBuf == NULL)
+//             goto END;
+//         conv_byte_size = convWidth * convHeight * 3;
+//         dest = 0;
+//         MPI_Send(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, dest, 99, MPI_COMM_WORLD);
+//         end_time = MPI_Wtime();
+//     }
+//     else {   // myrank == 0，即0号进程参与计算并负责接受数据
+//         // 设置参数
+//         if (size < 4) {
         
-        }
-        else if (size >= 4) {
+//         }
+//         else if (size >= 4) {
 
-        }
-        resBuf = convolution(base_x, base_y, convWidth, convHeight, BmpWidth, BmpHeight);
-        if (resBuf == NULL)
-            cerr << "0# resBuf error." << endl;
+//         }
+//         resBuf = convolution(base_x, base_y, convWidth, convHeight, BmpWidth, BmpHeight);
+//         if (resBuf == NULL)
+//             cerr << "0# resBuf error." << endl;
 
-        // 合并结果
-        for (source = 1; source < size; source++) {
-            MPI_Recv(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, MPI_ANY_SOURCE, 99, MPI_COMM_WORLD, &status);
-            if (size < 4) {
+//         // 合并结果
+//         for (source = 1; source < size; source++) {
+//             MPI_Recv(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, MPI_ANY_SOURCE, 99, MPI_COMM_WORLD, &status);
+//             if (size < 4) {
 
-            }
-            else if (size >= 4) {
+//             }
+//             else if (size >= 4) {
 
-            }   
-        }
-        end_time = MPI_Wtime();
-    }
+//             }   
+//         }
+//         end_time = MPI_Wtime();
+//     }
 
-END:
-    if (resBuf)
-        delete resBuf;
-    MPI_Finalize();
+// END:
+//     if (resBuf)
+//         delete resBuf;
+//     MPI_Finalize();
     // MPI End
+
 
     if (pBmpBuf) delete pBmpBuf;
     fclose(fp);
