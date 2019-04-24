@@ -317,7 +317,7 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     start_time = MPI_Wtime();
-    cout << "Rank " << myrank << " start." << endl;
+    cout << "Task " << myrank << " start." << endl;
 
     // 起始像素纵坐标
     convHeight = BmpHeight / size;
@@ -340,7 +340,7 @@ int main(int argc, char *argv[]) {
             goto END;
         dest = 0;
         end_time = MPI_Wtime();
-        cout << "Rank " << myrank << " end, cost " << end_time - start_time << " second(s)." << endl;
+        cout << "Task " << myrank << " end, cost " << end_time - start_time << " second(s)." << endl;
         MPI_Send(resBuf, conv_byte_size, MPI_UNSIGNED_CHAR, dest, 99, MPI_COMM_WORLD);
     }
     else {   // myrank == 0，即0号进程参与计算并负责接受数据
@@ -365,7 +365,7 @@ int main(int argc, char *argv[]) {
             memcpy(result + (status.MPI_SOURCE * convHeight * BmpWidth * 3), resBuf, (status.MPI_SOURCE == size - 1) ? lastConvByteSize : convByteSize);
         }
         end_time = MPI_Wtime();
-        cout << "Rank " << myrank << " end, cost " << end_time - start_time << " second(s)." << endl;
+        cout << "Task " << myrank << " end, cost " << end_time - start_time << " second(s)." << endl;
         saveBmp("result.bmp", result, BmpWidth, BmpHeight, BiBitCount);
     }
 
