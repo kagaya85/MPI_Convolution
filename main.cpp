@@ -246,7 +246,6 @@ unsigned char* convolution(int base_y, int conv_height) {
     unsigned char* resGp = resBuf + 1;
     unsigned char* resBp = resBuf;
 
-
     for(int i = 0; i < conv_height; i++)
         for(int j = 0; j < BmpWidth; j++) {
             *resRp = getGsValue(j, base_y + i, Rp);
