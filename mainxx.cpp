@@ -41,6 +41,14 @@ double GsCore[N][N];
 unsigned char *pBmpBuf = NULL;  //读入图像数据的指针
 int BmpWidth;    //图像的宽
 int BmpHeight;   //图像的高
+int MapWidth;    // 填充的后的宽
+int MapHeight;  // 填充后的高
+double (*GsRes)[255];
+int diffNumN = (((N + 1) / 2 + 1) * ((N + 1) / 2)) / 2;  // 高斯核中不同的数字个数
+int pixStep = 3;    // 移动一个像素指针移动的字节数
+int lineByte = MapWidth * pixStep;
+int line2Byte = lineByte * 2;
+
 /*******************************************************************************/
 
 void showBmpHead(BITMAPFILEHEADER &pBmpHead) {
@@ -73,17 +81,19 @@ void readBmp(FILE *fp, unsigned char *&pBmpBuf, int BmpWidth, int BmpHeight,
      * 灰度图像有颜色表，且颜色表表项为256
      * (可以理解为lineByte是对bmpWidth的以4为步长的向上取整)
      */
-    int lineByte = (BmpWidth * BiBitCount / 8 + 3) / 4 * 4;
+    int lineByte = (MapWidth * BiBitCount / 8 + 3) / 4 * 4;
 
-    //申请位图数据所需要的空间，读位图数据进内存
-    pBmpBuf = new (nothrow) unsigned char[lineByte * BmpHeight];
+    //申请位图数据所需要的空间，读位图数据进内存，并填充边缘为0
+    pBmpBuf = new (nothrow) unsigned char[lineByte * (BmpHeight + 4)]();
 
     if (pBmpBuf == NULL) {
         cerr << "Mem alloc failed." << endl;
         exit(-1);
     }
 
-    fread(pBmpBuf, lineByte * BmpHeight, 1, fp);
+    unsigned char* bufp = pBmpBuf + lineByte * 2 + 6;
+    for (int i = 0; i < BmpHeight; i++, bufp += lineByte)
+        fread(bufp, lineByte, 1, fp);
 
     return;
 }
@@ -202,31 +212,111 @@ void genGsCore() {
 
     fclose(fp);
 }
+
+/**
+ * 提前计算所有高斯乘积的结果、
+ */
+void genGsRes() {
+    GsRes = new(nothrow) double[diffNumN][255];
+    if(GsRes = NULL ) {
+        cerr << "New GsRes error." << endl;
+        exit(-1);
+    }
+
+    int x = 0, y = 0, start_x = 1;
+
+    for (int num = 0; num < diffNumN; num++) {
+        for (int i = 0; i < 256; i++) {
+            GsRes[num][i] = GsCore[y][x] * i;
+        }
+        x++;
+        if (x > (N + 1) / 2) {
+            y++;
+            x = start_x;
+            start_x++;
+        }
+    }
+}
+
 /**
  * 给出像素二维坐标位置和通道指针，计算高斯和
  */
-unsigned char getGsValue(int x, int y, const unsigned char *channal) {
-    double sum = 0;
-    int pixStep = 3;
-    int byte_per_line = BmpWidth * pixStep;
-    int offset= (BmpWidth * (y - 2) + x - 2) * pixStep;
-    for (int i : {0, 1, 2, 3, 4}) {
-        for (int j : {0, 1, 2, 3, 4}) {
-            int pix_y = y + i - 2;
-            int pix_x = x + j - 2;
-            // 如果超出边界则补0, sum不增加
-            if (pix_y < 0 || pix_y >= BmpHeight || pix_x < 0 || pix_y >= BmpWidth) {
-                offset += 3;
-                continue;
-            }
+unsigned char getGsValue(int x, int y, const unsigned char *channal)
+{
+    double sum[4];
 
-            sum += channal[offset] * GsCore[i][j];
-            offset += 3;
-        }
-        offset += (byte_per_line - 15);
-    }
+    /**
+     * x o o o x
+     * o o o o o
+     * o o o o o
+     * o o o o o
+     * x o o o x
+     */
+    sum[0] += GsRes[0][channal[-line2Byte - 6]];
+    sum[1] += GsRes[0][channal[-line2Byte + 6]];
+    sum[2] += GsRes[0][channal[line2Byte - 6]];
+    sum[3] += GsRes[0][channal[line2Byte + 6]];
+    /**
+     * o x o x o
+     * x o o o x
+     * o o o o o
+     * x o o o x
+     * o x o x o
+     */
+    sum[0] += GsRes[1][channal[-line2Byte-3]];
+    sum[1] += GsRes[1][channal[-line2Byte+3]];
+    sum[2] += GsRes[1][channal[-lineByte-6]];
+    sum[3] += GsRes[1][channal[-lineByte+6]];
+    sum[0] += GsRes[1][channal[lineByte-6]];
+    sum[1] += GsRes[1][channal[lineByte+6]];
+    sum[2] += GsRes[1][channal[line2Byte-3]];
+    sum[3] += GsRes[1][channal[line2Byte+3]];
+    /**
+     * o o x o o
+     * o o o o o
+     * x o o o x
+     * o o o o o
+     * o o x o o
+     */
+    sum[0] += GsRes[2][channal[-line2Byte]];
+    sum[1] += GsRes[2][channal[-6]];
+    sum[2] += GsRes[2][channal[6]];
+    sum[3] += GsRes[2][channal[line2Byte]];
+    /**
+     * o o o o o
+     * o x o x o
+     * o o o o o
+     * o x o x o
+     * o o o o o
+     */
+    sum[0] += GsRes[3][channal[-lineByte-3]];
+    sum[1] += GsRes[3][channal[-lineByte+3]];
+    sum[2] += GsRes[3][channal[lineByte-3]];
+    sum[3] += GsRes[3][channal[lineByte+3]];
+    /**
+     * o o o o o
+     * o o x o o
+     * o x o x o
+     * o o x o o
+     * o o o o o
+     */
+    sum[0] += GsRes[4][channal[-3]];
+    sum[1] += GsRes[4][channal[-lineByte]];
+    sum[2] += GsRes[4][channal[+lineByte]];
+    sum[3] += GsRes[4][channal[+3]];
+    /**
+     * o o o o o
+     * o o o o o
+     * o o x o o
+     * o o o o o
+     * o o o o o
+     */
+    sum[0] += GsRes[5][channal[0]];
 
-    return sum;
+    sum[2] += sum[3];
+    sum[0] += sum[1];
+
+    return sum[0] + sum[2];
 }
 
 /**
@@ -235,10 +325,10 @@ unsigned char getGsValue(int x, int y, const unsigned char *channal) {
  */
 unsigned char* convolution(int base_y, int conv_height) {
     cout << "Base_y: " << base_y << " conv_height: " << conv_height << endl;
-    int pixStep = 3;    // 移动一个像素指针移动的字节数
-    const unsigned char* Rp = pBmpBuf + 2;
-    const unsigned char* Gp = pBmpBuf + 1;
-    const unsigned char* Bp = pBmpBuf;
+
+    const unsigned char* Rp = pBmpBuf + lineByte * 2 + 2;
+    const unsigned char* Gp = pBmpBuf + lineByte * 2 + 1;
+    const unsigned char* Bp = pBmpBuf + lineByte * 2 ;
     unsigned char* resBuf = NULL;
     int conv_byte_size = BmpWidth * conv_height * pixStep;
 
@@ -249,18 +339,23 @@ unsigned char* convolution(int base_y, int conv_height) {
     unsigned char* resGp = resBuf + 1;
     unsigned char* resBp = resBuf;
 
-
-    for(int i = 0; i < conv_height; i++)
+    for(int i = 0; i < conv_height; i++) {
         for(int j = 0; j < BmpWidth; j++) {
             *resRp = getGsValue(j, base_y + i, Rp);
             *resGp = getGsValue(j, base_y + i, Gp);
             *resBp = getGsValue(j, base_y + i, Bp);
 
+            Rp += pixStep;
+            Gp += pixStep;
+            Bp += pixStep;
             resRp += pixStep;
             resGp += pixStep;
             resBp += pixStep;
         }
-
+        Rp += 12;
+        Gp += 12;
+        Bp += 12;
+    }
     return resBuf;
 }
 
@@ -276,7 +371,6 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     start_time = MPI_Wtime();
-
     cout << "Task " << myrank << " start." << endl;
 
     BITMAPFILEHEADER BmpHead;
@@ -302,6 +396,8 @@ int main(int argc, char *argv[]) {
 
     BmpWidth = BmpInfo.biWidth;    //宽度用来计算每行像素的字节数
     BmpHeight = BmpInfo.biHeight;  // 像素的行数
+    MapWidth = BmpWidth + 4;
+    MapHeight = BmpHeight + 4;
     //计算图像每行像素所占的字节数（必须是4的倍数）
     BiBitCount = BmpInfo.biBitCount;
 
@@ -311,6 +407,8 @@ int main(int argc, char *argv[]) {
     // genGsCore();
     // 读取卷积核
     readGsCore();
+    // 算好所有乘积
+    genGsRes();
 
     // MPI 并行计算部分
     unsigned char* resBuf = NULL;
@@ -358,10 +456,10 @@ int main(int argc, char *argv[]) {
         memcpy(result, resBuf, conv_byte_size);
         delete resBuf;
         resBuf = NULL;
-
+        
         int convByteSize = BmpWidth * convHeight * 3; 
         int lastConvByteSize = BmpWidth * lastConvHeight * 3; 
-
+        
         resBuf = new(nothrow) unsigned char[lastConvByteSize]; // 按可能最大的接受字节数申请
         // 合并结果
         for (int i = 0; i < size - 1; i++) {
@@ -375,11 +473,12 @@ int main(int argc, char *argv[]) {
 
 END:
     if (resBuf) delete resBuf;
-    MPI_Finalize();
-    // MPI End
-
     if (pBmpBuf) delete pBmpBuf;
     if (result) delete result;
+    if (GsRes) delete[] GsRes;
+
+    // MPI End
+    MPI_Finalize();
 
     fclose(fp);
 

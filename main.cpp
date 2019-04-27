@@ -265,6 +265,16 @@ unsigned char* convolution(int base_y, int conv_height) {
  * start
  */
 int main(int argc, char *argv[]) {
+    int size, myrank, dest;
+    MPI_Status status;
+    double start_time, end_time;
+    
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    start_time = MPI_Wtime();
+    cout << "Task " << myrank << " start." << endl;
+
     BITMAPFILEHEADER BmpHead;
     BITMAPINFODEADER BmpInfo;
 
@@ -283,8 +293,8 @@ int main(int argc, char *argv[]) {
     fread(&BmpInfo, sizeof(BITMAPINFOHEADER), 1, fp);
 
     // 打印一下文件信息
-    showBmpHead(BmpHead);
-    showBmpInforHead(BmpInfo);
+    // showBmpHead(BmpHead);
+    // showBmpInforHead(BmpInfo);
 
     BmpWidth = BmpInfo.biWidth;    //宽度用来计算每行像素的字节数
     BmpHeight = BmpInfo.biHeight;  // 像素的行数
@@ -298,10 +308,8 @@ int main(int argc, char *argv[]) {
     // 读取卷积核
     readGsCore();
 
+
     // MPI 并行计算部分
-    int size, myrank, dest;
-    MPI_Status status;
-    double start_time, end_time;
 
     unsigned char* resBuf = NULL;
     int base_y, convHeight, lastConvHeight;    // 起始的像素点以及计算区域
@@ -312,12 +320,6 @@ int main(int argc, char *argv[]) {
         cerr << "Result new error." << endl;
         exit(-1);
     }
-
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    start_time = MPI_Wtime();
-    cout << "Task " << myrank << " start." << endl;
 
     // 起始像素纵坐标
     convHeight = BmpHeight / size;
