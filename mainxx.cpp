@@ -324,7 +324,7 @@ unsigned char getGsValue(int x, int y, const unsigned char *channal)
  * 返回rgb位图数组
  */
 unsigned char* convolution(int base_y, int conv_height) {
-    cout << "Base_y: " << base_y << " conv_height: " << conv_height << endl;
+    // cout << "Base_y: " << base_y << " conv_height: " << conv_height << endl;
 
     const unsigned char* Rp = pBmpBuf + lineByte * (2+base_y) + 2;
     const unsigned char* Gp = pBmpBuf + lineByte * (2+base_y) + 1;
