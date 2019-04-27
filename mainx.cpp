@@ -287,8 +287,8 @@ int main(int argc, char *argv[]) {
     fread(&BmpInfo, sizeof(BITMAPINFOHEADER), 1, fp);
 
     // 打印一下文件信息
-    // showBmpHead(BmpHead);
-    // showBmpInforHead(BmpInfo);
+    showBmpHead(BmpHead);
+    showBmpInforHead(BmpInfo);
 
     BmpWidth = BmpInfo.biWidth;    //宽度用来计算每行像素的字节数
     BmpHeight = BmpInfo.biHeight;  // 像素的行数
