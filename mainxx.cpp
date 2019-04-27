@@ -218,7 +218,7 @@ void genGsCore() {
  */
 void genGsRes() {
     GsRes = new(nothrow) double[diffNumN][255];
-    if(GsRes = NULL ) {
+    if(GsRes == NULL) {
         cerr << "New GsRes error." << endl;
         exit(-1);
     }
@@ -326,9 +326,9 @@ unsigned char getGsValue(int x, int y, const unsigned char *channal)
 unsigned char* convolution(int base_y, int conv_height) {
     cout << "Base_y: " << base_y << " conv_height: " << conv_height << endl;
 
-    const unsigned char* Rp = pBmpBuf + lineByte * 2 + 2;
-    const unsigned char* Gp = pBmpBuf + lineByte * 2 + 1;
-    const unsigned char* Bp = pBmpBuf + lineByte * 2 ;
+    const unsigned char* Rp = pBmpBuf + lineByte * (2+base_y) + 2;
+    const unsigned char* Gp = pBmpBuf + lineByte * (2+base_y) + 1;
+    const unsigned char* Bp = pBmpBuf + lineByte * (2+base_y) ;
     unsigned char* resBuf = NULL;
     int conv_byte_size = BmpWidth * conv_height * pixStep;
 
