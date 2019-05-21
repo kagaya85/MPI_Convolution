@@ -4,3 +4,4 @@ main
 .gitignore
 mainx
 mainxx
+pthread
