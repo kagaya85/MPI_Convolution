@@ -10,6 +10,8 @@
 #include <pthread.h>
 #include <vector>
 
+#include <omp.h>
+
 #pragma pack(1)
 
 typedef struct BITMAPFILEHEADER
@@ -408,12 +410,12 @@ int main(int argc, char *argv[])
 {
     double start_time, end_time;
     if (argc != 2) {
-        cerr << "Please input thread number like: ./pthread 4" << endl;
+        cerr << "Please input thread number like: ./openmp 4" << endl;
         exit(-1);
     }
     int thread_num = atoi(argv[1]);
     if(thread_num <= 0) {
-        cerr << "Please input thread number like: ./pthread 4" << endl;
+        cerr << "Please input thread number like: ./openmp 4" << endl;
         exit(-1);
     }
     preAction();
@@ -456,32 +458,20 @@ int main(int argc, char *argv[])
     Value = BmpWidth + N / 2 + N / 2;
     vvv = -len * Value;
     
-    pthread_t thread_id;
-    vector<pthread_t> threads;
     task_para* paras = new task_para[thread_num];
     
     // pthread create
+    #pragma omp parallel for
     for (int i = 0; i < thread_num; i++) 
     {
         paras[i].thread_num = thread_num;
         paras[i].my_num = i;
         paras[i].start_line = i * BmpHeight / thread_num;
         paras[i].end_line = paras[i].start_line + BmpHeight / thread_num - 1;
-        if(pthread_create(&thread_id, NULL, thread_task, &paras[i]) < 0)
-        {
-            cerr << "pthread_create error" << endl;
-            exit(-1);
-        }
-        cout << "Thread " << paras[i].my_num << " start." << endl;
-        threads.push_back(thread_id);
-    }
+        
+        thread_task(&paras[i]);
 
-    // pthread join
-    for (auto tid : threads) 
-    {
-        cout << "Wait for thread " << tid << endl;
-        pthread_join(tid, NULL);
-        cout << "Join thread " << tid << endl;
+        cout << "Thread " << paras[i].my_num << " start." << endl;
     }
 
     saveBmp("result.bmp", result, BmpWidth, BmpHeight, BiBitCount);
